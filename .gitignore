@@ -1,0 +1,40 @@
+# =========================
+# DATA OUTPUT (BELANGRIJK)
+# =========================
+airflow-docker/output/
+airflow-docker/data/
+*.csv
+*.parquet
+*.json
+*.log
+
+# =========================
+# AIRFLOW
+# =========================
+airflow.db
+airflow-webserver.pid
+airflow-scheduler.pid
+logs/
+*.log
+
+# =========================
+# PYTHON
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+# =========================
+# JUPYTER (indien gebruikt)
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# SYSTEM FILES
+# =========================
+.DS_Store
+Thumbs.db
