@@ -1,5 +1,6 @@
 airflow-docker/data_input_realtime/*.csv filter=lfs diff=lfs merge=lfs -text
 airflow-docker/output/realtime/*.csv filter=lfs diff=lfs merge=lfs -text
+airflow-docker/data/**/*.parquet filter=lfs diff=lfs merge=lfs -text
 airflow-docker/output/csv/*.csv filter=lfs diff=lfs merge=lfs -text
 airflow-docker/output/parquet/*.parquet filter=lfs diff=lfs merge=lfs -text
 airflow-docker/data/*.parquet filter=lfs diff=lfs merge=lfs -text
