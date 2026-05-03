@@ -1,12 +1,4 @@
-# =========================
-# DATA OUTPUT (BELANGRIJK)
-# =========================
-airflow-docker/output/
-airflow-docker/data/
-*.csv
-*.parquet
-*.json
-*.log
+
 
 # =========================
 # AIRFLOW
