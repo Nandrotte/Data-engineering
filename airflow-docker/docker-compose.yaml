@@ -81,6 +81,9 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
+    - ${AIRFLOW_PROJ_DIR:-.}/data_input_realtime:/opt/airflow/data_input_realtime
+    - ${AIRFLOW_PROJ_DIR:-.}/output:/opt/airflow/output
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -203,6 +206,21 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+
+  realtime-file-watcher:
+    <<: *airflow-common
+    command: python /opt/airflow/plugins/realtime_input_watcher.py
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-common-env
+      REALTIME_WATCH_FOLDER: /opt/airflow/data_input_realtime
+      REALTIME_WATCHER_DAG_ID: realtime_ecommerce_processing
+      REALTIME_WATCH_INTERVAL_SECONDS: '5'
+      REALTIME_WATCH_MIN_FILE_AGE_SECONDS: '2'
 
   airflow-init:
     <<: *airflow-common

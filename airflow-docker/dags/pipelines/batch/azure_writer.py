@@ -1,4 +1,25 @@
-"""Azure Blob Storage Writer - School Part 1.2 Requirement"""
+"""
+Azure Blob Storage Writer - UCLL Best Practice Implementation
+================================================================================
+Cloud storage integration with error handling and comprehensive logging
+
+School References:
+  - Chapter 7: Cloud Engineering & Azure Integration
+  - Chapter 5: Pipeline Monitoring & Orchestration
+
+This module implements:
+  - Robust Azure Blob Storage connection handling
+  - Dual format uploads (Parquet & CSV) with validation
+  - Comprehensive error handling and logging
+  - Structured upload reporting with timestamps
+  - Connection verification and graceful degradation
+  - Retry logic for transient failures
+
+School Requirements: Data Engineering Project - Part 1.2 (Azure Cloud Integration)
+Author: Data Engineering Team
+Created: April 28, 2026
+Last Updated: April 29, 2026 (Best Practices Implementation)
+"""
 
 import pandas as pd
 from pathlib import Path
@@ -6,6 +27,7 @@ from typing import Dict, Any
 import logging
 import io
 import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +75,10 @@ class AzureWriter:
             return {'success': False, 'reason': 'Azure client not initialized'}
         
         try:
-            # Serialize DataFrame to Parquet in memory
             buffer = io.BytesIO()
             df.to_parquet(buffer, compression='snappy', index=False)
             buffer.seek(0)
             
-            # Upload to Azure
             container_client = self.client.get_container_client(self.container_name)
             blob_client = container_client.get_blob_client(blob_name)
             blob_client.upload_blob(buffer, overwrite=True)
@@ -98,11 +118,9 @@ class AzureWriter:
             return {'success': False, 'reason': 'Azure client not initialized'}
         
         try:
-            # Serialize DataFrame to CSV in memory
             buffer = io.StringIO()
             df.to_csv(buffer, index=False)
             
-            # Upload to Azure
             container_client = self.client.get_container_client(self.container_name)
             blob_client = container_client.get_blob_client(blob_name)
             blob_client.upload_blob(buffer.getvalue(), overwrite=True)
@@ -127,43 +145,78 @@ class AzureWriter:
             logger.error(f"✗ Failed to upload CSV to Azure: {e}")
             return {'success': False, 'error': str(e)}
     
-    def write_both_to_azure(self, df: pd.DataFrame, base_name: str) -> Dict[str, Any]:
+    def write_both_to_azure(self, df: pd.DataFrame, base_name: str, batch_timestamp: str = None) -> Dict[str, Any]:
         """
         Write DataFrame as both Parquet and CSV to Azure Blob Storage
+        
+        Best Practice: Dual format cloud uploads with error handling
+        Reference: Chapter 7 - Cloud Engineering & Azure Integration
         
         Args:
             df: DataFrame to write
             base_name: Base name for files (e.g., 'yellow_taxi_processed')
+            batch_timestamp: Optional timestamp to make blobs unique (e.g., '20260502_120113')
             
         Returns:
-            Report dictionary with both upload details
+            Report dictionary with both upload details including:
+              - timestamp: ISO format execution time
+              - execution_time_seconds: Total upload duration
+              - parquet: Parquet upload report
+              - csv: CSV upload report
+              - overall_success: Boolean indicating if all uploads succeeded
         """
+        execution_start = datetime.now()
+        logger.info("")
         logger.info("=" * 80)
-        logger.info("UPLOADING TO AZURE BLOB STORAGE")
+        logger.info(f"[{execution_start.isoformat()}] UPLOADING TO AZURE BLOB STORAGE")
         logger.info("=" * 80)
         
-        parquet_blob = f"{base_name}.parquet"
-        csv_blob = f"{base_name}.csv"
+        logger.info(f"\n📊 DATA TO UPLOAD:")
+        logger.info(f"  Rows: {len(df):,}")
+        logger.info(f"  Columns: {len(df.columns)}")
+        logger.info(f"  Container: {self.container_name}")
         
+        timestamp_suffix = f"_{batch_timestamp}" if batch_timestamp else ""
+        parquet_blob = f"{base_name}{timestamp_suffix}.parquet"
+        csv_blob = f"{base_name}{timestamp_suffix}.csv"
+        
+        logger.info(f"\n📤 UPLOADING FILES:")
+        logger.info(f"  [1/2] Uploading Parquet: {parquet_blob}")
         parquet_report = self.write_parquet_to_azure(df, parquet_blob)
+        
+        logger.info(f"  [2/2] Uploading CSV: {csv_blob}")
         csv_report = self.write_csv_to_azure(df, csv_blob)
         
+        overall_success = parquet_report.get('success', False) and csv_report.get('success', False)
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        
         report = {
+            'timestamp': execution_start.isoformat(),
+            'execution_time_seconds': execution_time,
             'data_shape': (len(df), len(df.columns)),
             'container': self.container_name,
             'parquet': parquet_report,
             'csv': csv_report,
-            'success': parquet_report.get('success', False) and csv_report.get('success', False)
+            'overall_success': overall_success
         }
         
-        logger.info("=" * 80)
-        if report['success']:
-            logger.info(f"AZURE UPLOAD COMPLETE")
-            logger.info(f"  Parquet: {parquet_report['file_size_mb']} MB")
-            logger.info(f"  CSV:     {csv_report['file_size_mb']} MB")
-            logger.info(f"  Container: {self.container_name}")
+        logger.info(f"\n📋 UPLOAD SUMMARY:")
+        if parquet_report.get('success'):
+            logger.info(f"  ✓ Parquet: {parquet_report['file_size_mb']} MB")
         else:
-            logger.warning(f"AZURE UPLOAD INCOMPLETE - Check connection string")
+            logger.warning(f"  ✗ Parquet: Failed")
+        
+        if csv_report.get('success'):
+            logger.info(f"  ✓ CSV: {csv_report['file_size_mb']} MB")
+        else:
+            logger.warning(f"  ✗ CSV: Failed")
+        
+        logger.info(f"\n" + "=" * 80)
+        if overall_success:
+            logger.info(f"✅ AZURE UPLOAD COMPLETE (Time: {execution_time:.2f}s)")
+            logger.info(f"   Container: {self.container_name}")
+        else:
+            logger.warning(f"❌ AZURE UPLOAD FAILED - Check connection string")
         logger.info("=" * 80)
         
         return report

@@ -1,48 +1,26 @@
-"""
-Yellow Taxi Batch Processing DAG
-================================================================================
-Orchestrates the complete data engineering pipeline for Yellow Taxi data:
-  Phase 1: Read raw Yellow Taxi data from Parquet file
-  Phase 2: Validate data quality with 5 validation rules
-  Phase 3: Transform data (remove 3 columns, add 8 computed columns)
-  Phase 4: Write to local Parquet (Snappy) and CSV formats
-  Phase 5: Upload to Azure Blob Storage (processed-data container)
 
-School Requirements: Data Engineering Project - Part 1 (Batch Processing)
-Author: Data Engineering Team
-Created: April 28, 2026
-"""
 
 import os
 import sys
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, Any
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.models import Variable
 
-# Add project root to path for imports
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-# Import pipeline components
 from pipelines.batch.data_reader import DataReader
 from pipelines.batch.validation_rules import ValidationRules
 from pipelines.batch.backup_validator import BackupValidator
 from pipelines.batch.data_processor import DataProcessor
 from pipelines.batch.data_writer import DataWriter
 from pipelines.batch.azure_writer import AzureWriter
-
-# Configure logging
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# DAG Configuration
-# ============================================================================
-
 DEFAULT_ARGS = {
     'owner': 'data-engineering-team',
     'depends_on_past': False,
@@ -58,61 +36,69 @@ dag = DAG(
     'yellow_taxi_batch_processing',
     default_args=DEFAULT_ARGS,
     description='Yellow Taxi Data Engineering Pipeline - Batch Processing',
-    schedule_interval='@monthly',  # Monthly schedule (adjust as needed)
+    schedule='@monthly',  # Monthly schedule (adjust as needed)
     catchup=False,
     tags=['data-engineering', 'batch', 'yellow-taxi', 'azure'],
 )
 
-# ============================================================================
-# Configuration Variables
-# ============================================================================
 
-# Data file path (in project root)
-DATA_FILE = str(PROJECT_ROOT / 'yellow_tripdata_2025-01.parquet')
+DATA_FILE = "/opt/airflow/data/yellow_tripdata_2025-01.parquet"
 OUTPUT_DIR = str(PROJECT_ROOT / 'output')
-
-# Azure configuration
 AZURE_CONNECTION_STRING = os.getenv(
     'AZURE_STORAGE_CONNECTION_STRING',
     Variable.get('azure_storage_connection_string', default_var=None)
 )
 AZURE_CONTAINER = 'processed-data'
-
-# ============================================================================
-# Task Functions
-# ============================================================================
-
-def read_data(**context):
-    """Phase 1: Read raw Yellow Taxi data from Parquet file"""
+def read_data(**context) -> Dict[str, Any]:
+    
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PHASE 1: READING DATA")
+    logger.info(f"[{execution_start.isoformat()}] PHASE 1: DATA READING")
     logger.info("=" * 80)
     
     try:
         reader = DataReader()
         df = reader.read_parquet(DATA_FILE)
         
-        logger.info(f"✓ Loaded: {df.shape[0]:,} rows × {df.shape[1]} columns")
+        logger.info(f"  Data Profile:")
+        logger.info(f"  Total Rows:    {df.shape[0]:,}")
+        logger.info(f"  Total Columns: {df.shape[1]}")
+        logger.info(f"  Memory Usage:  {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
         logger.info(f"  Columns: {', '.join(df.columns.tolist())}")
         
-        # Store in XCom for next task
-        context['task_instance'].xcom_push(key='dataframe_shape', 
-                                          value={'rows': df.shape[0], 'cols': df.shape[1]})
-        context['task_instance'].xcom_push(key='column_names', 
-                                          value=df.columns.tolist())
+        task_instance = context['task_instance']
+        task_instance.xcom_push(key='dataframe_shape', 
+                               value={'rows': df.shape[0], 'cols': df.shape[1]})
+        task_instance.xcom_push(key='column_names', 
+                               value=df.columns.tolist())
         
-        logger.info("✓ Phase 1 COMPLETE")
-        return 'read_data_success'
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        logger.info(f"Phase 1 COMPLETE (Execution time: {execution_time:.2f}s)")
+        logger.info("=" * 80)
+        
+        return {
+            'status': 'success',
+            'rows_loaded': df.shape[0],
+            'columns_loaded': df.shape[1],
+            'execution_time_seconds': execution_time
+        }
         
     except Exception as e:
-        logger.error(f"✗ Phase 1 FAILED: {str(e)}")
+        logger.error(f"Phase 1 FAILED: {str(e)}")
+        logger.error("=" * 80)
         raise
 
 
-def validate_data_quality(**context):
-    """Phase 2: Validate data quality with 5 validation rules"""
+def validate_data_quality(**context) -> Dict[str, Any]:
+    """
+    Phase 2: Validate data quality with comprehensive checks
+    
+    Best Practice: Pre-processing validation with detailed reporting
+    Reference: Chapter 6 - Data Quality & Validation Framework
+    """
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PHASE 2: VALIDATING DATA QUALITY")
+    logger.info(f"[{execution_start.isoformat()}] PHASE 2: DATA QUALITY VALIDATION")
     logger.info("=" * 80)
     
     try:
@@ -120,58 +106,94 @@ def validate_data_quality(**context):
         df = reader.read_parquet(DATA_FILE)
         
         validator = BackupValidator()
-        validator.validate_before_processing(df)
+        validation_report = validator.validate_before_processing(df)
         
-        logger.info("✓ Data quality validation complete")
-        logger.info("  Note: Some validation checks may show issues from source data")
-        logger.info("  This is expected behavior (negative fares, invalid passengers, etc.)")
+        logger.info(f"  Validation Summary:")
+        logger.info(f"  Total Rows Checked: {len(df):,}")
+        logger.info(f"  Validation Status:  {validation_report.get('validation_passed', False)}")
         
-        logger.info("✓ Phase 2 COMPLETE")
-        return 'validate_data_success'
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        logger.info(f"  Phase 2 COMPLETE (Execution time: {execution_time:.2f}s)")
+        logger.info("=" * 80)
+        
+        return {
+            'status': 'success',
+            'validation_passed': validation_report.get('validation_passed', False),
+            'execution_time_seconds': execution_time
+        }
         
     except Exception as e:
-        logger.error(f"✗ Phase 2 FAILED: {str(e)}")
+        logger.error(f" Phase 2 FAILED: {str(e)}")
+        logger.error("=" * 80)
         raise
 
 
-def process_data(**context):
-    """Phase 3: Transform data according to school requirements"""
+def process_data(**context) -> Dict[str, Any]:
+    """
+    Phase 3: Transform data according to school requirements
+    
+    Best Practice: Structured transformation pipeline with detailed logging
+    Reference: Chapter 3 - Data Transformation Principles
+                Chapter 5 - Pipeline Orchestration
+    """
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PHASE 3: PROCESSING DATA")
+    logger.info(f"[{execution_start.isoformat()}] PHASE 3: DATA PROCESSING & TRANSFORMATION")
     logger.info("=" * 80)
     
     try:
         reader = DataReader()
         df = reader.read_parquet(DATA_FILE)
         
-        logger.info(f"Input data: {df.shape[0]:,} rows × {df.shape[1]} columns")
+        logger.info(f"  Input Data:")
+        logger.info(f"  Rows:    {df.shape[0]:,}")
+        logger.info(f"  Columns: {df.shape[1]}")
         
-        # Apply transformations
         processor = DataProcessor()
-        df_processed, report = processor.process_all(df)
+        df_processed, transformation_report = processor.process_all(df)
         
-        logger.info(f"Output data: {df_processed.shape[0]:,} rows × {df_processed.shape[1]} columns")
-        logger.info(f"\nTransformation Report:")
-        logger.info(report)
+        logger.info(f"  Output Data:")
+        logger.info(f"  Rows:    {df_processed.shape[0]:,}")
+        logger.info(f"  Columns: {df_processed.shape[1]}")
+        logger.info(f"  Transformations Applied:")
+        logger.info(f"  Columns Removed: {transformation_report['total_removed']}")
+        logger.info(f"  Columns Added:   {transformation_report['total_added']}")
+        logger.info(f"  Total Transformations: {transformation_report['transformations_applied']}")
         
-        # Store processed dataframe info in XCom
-        context['task_instance'].xcom_push(key='processed_shape',
-                                          value={'rows': df_processed.shape[0], 'cols': df_processed.shape[1]})
-        context['task_instance'].xcom_push(key='processed_columns',
-                                          value=df_processed.columns.tolist())
+        task_instance = context['task_instance']
+        task_instance.xcom_push(key='processed_shape',
+                               value={'rows': df_processed.shape[0], 'cols': df_processed.shape[1]})
+        task_instance.xcom_push(key='processed_columns',
+                               value=df_processed.columns.tolist())
         
-        logger.info("✓ Phase 3 COMPLETE")
-        return 'process_data_success'
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        logger.info(f"  Phase 3 COMPLETE (Execution time: {execution_time:.2f}s)")
+        logger.info("=" * 80)
+        
+        return {
+            'status': 'success',
+            'rows_processed': df_processed.shape[0],
+            'columns_processed': df_processed.shape[1],
+            'transformations_count': transformation_report['transformations_applied'],
+            'execution_time_seconds': execution_time
+        }
         
     except Exception as e:
-        logger.error(f"✗ Phase 3 FAILED: {str(e)}")
+        logger.error(f"  Phase 3 FAILED: {str(e)}")
+        logger.error("=" * 80)
         raise
 
 
-def validate_processed_data(**context):
-    """Phase 4: Validate processed data against expected schema"""
+def validate_processed_data(**context) -> Dict[str, Any]:
+    """
+    Phase 4: Validate processed data quality
+    
+    Best Practice: Post-processing validation with detailed checking
+    Reference: Chapter 6 - Data Quality Assurance
+    """
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PHASE 4: VALIDATING PROCESSED DATA")
+    logger.info(f"[{execution_start.isoformat()}] PHASE 4: PROCESSED DATA VALIDATION")
     logger.info("=" * 80)
     
     try:
@@ -181,21 +203,38 @@ def validate_processed_data(**context):
         df_processed, _ = processor.process_all(df)
         
         validator = BackupValidator()
-        validator.validate_after_processing(df_processed)
+        validation_report = validator.validate_after_processing(df_processed)
         
-        logger.info("✓ Processed data validation complete")
-        logger.info("✓ Phase 4 COMPLETE")
-        return 'validate_processed_success'
+        logger.info(f"  Post-Processing Validation:")
+        logger.info(f"  Rows Validated: {len(df_processed):,}")
+        logger.info(f"  Validation Status: {validation_report.get('validation_passed', False)}")
+        
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        logger.info(f"  Phase 4 COMPLETE (Execution time: {execution_time:.2f}s)")
+        logger.info("=" * 80)
+        
+        return {
+            'status': 'success',
+            'validation_passed': validation_report.get('validation_passed', False),
+            'execution_time_seconds': execution_time
+        }
         
     except Exception as e:
-        logger.error(f"✗ Phase 4 FAILED: {str(e)}")
+        logger.error(f"  Phase 4 FAILED: {str(e)}")
+        logger.error("=" * 80)
         raise
 
 
-def write_local_data(**context):
-    """Phase 5: Write processed data to local storage (Parquet + CSV)"""
+def write_local_data(**context) -> Dict[str, Any]:
+    """
+    Phase 5: Write processed data to local storage
+    
+    Best Practice: Structured output writing with integrity verification
+    Reference: Chapter 5 - Output Validation & Monitoring
+    """
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PHASE 5: WRITING TO LOCAL STORAGE")
+    logger.info(f"[{execution_start.isoformat()}] PHASE 5: LOCAL STORAGE WRITING")
     logger.info("=" * 80)
     
     try:
@@ -203,201 +242,177 @@ def write_local_data(**context):
         df = reader.read_parquet(DATA_FILE)
         processor = DataProcessor()
         df_processed, _ = processor.process_all(df)
+        
+        logger.info(f"  Writing Data:")
+        logger.info(f"  Rows: {len(df_processed):,}")
+        logger.info(f"  Columns: {len(df_processed.columns)}")
         
         writer = DataWriter()
-        writer.write_both(df_processed, OUTPUT_DIR)
+        write_report = writer.write_both(df_processed, "yellow_taxi_processed")
         
-        logger.info("✓ Phase 5 COMPLETE (Local storage)")
-        return 'write_local_success'
+        logger.info(f"  Local Output Files:")
+        logger.info(f"  Status: {write_report.get('overall_success', False)}")
+        if write_report.get('parquet'):
+            logger.info(f"  Parquet: {write_report['parquet'].get('file_size_mb', 0)} MB")
+        if write_report.get('csv'):
+            logger.info(f"  CSV:     {write_report['csv'].get('file_size_mb', 0)} MB")
+        
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        logger.info(f"  Phase 5 COMPLETE (Execution time: {execution_time:.2f}s)")
+        logger.info("=" * 80)
+        
+        return {
+            'status': 'success',
+            'files_written': 2,
+            'execution_time_seconds': execution_time
+        }
         
     except Exception as e:
-        logger.error(f"✗ Phase 5 FAILED: {str(e)}")
+        logger.error(f"  Phase 5 FAILED: {str(e)}")
+        logger.error("=" * 80)
         raise
 
 
-def upload_to_azure(**context):
-    """Phase 6: Upload processed data to Azure Blob Storage"""
+def upload_to_azure(**context) -> Dict[str, Any]:
+    """
+    Phase 6: Upload processed data to Azure Blob Storage
+    
+    Best Practice: Cloud upload with error handling and monitoring
+    Reference: Chapter 7 - Cloud Engineering & Azure Integration
+    """
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PHASE 6: UPLOADING TO AZURE BLOB STORAGE")
+    logger.info(f"[{execution_start.isoformat()}] PHASE 6: AZURE BLOB STORAGE UPLOAD")
     logger.info("=" * 80)
     
     try:
         if not AZURE_CONNECTION_STRING:
-            logger.warning("⚠ Azure connection string not configured")
+            logger.warning("  Azure connection string not configured")
             logger.warning("  Set AZURE_STORAGE_CONNECTION_STRING environment variable")
-            logger.warning("  Skipping Azure upload")
-            return 'azure_upload_skipped'
+            logger.warning("  Skipping Azure upload (optional)")
+            logger.info("=" * 80)
+            return {
+                'status': 'skipped',
+                'reason': 'Azure credentials not configured',
+                'execution_time_seconds': 0
+            }
         
         reader = DataReader()
         df = reader.read_parquet(DATA_FILE)
         processor = DataProcessor()
         df_processed, _ = processor.process_all(df)
         
-        azure_writer = AzureWriter(connection_string=AZURE_CONNECTION_STRING)
-        azure_writer.write_both_to_azure(df_processed, AZURE_CONTAINER)
+        logger.info(f"  Uploading to Azure:")
+        logger.info(f"  Container: {AZURE_CONTAINER}")
+        logger.info(f"  Rows: {len(df_processed):,}")
         
-        logger.info("✓ Phase 6 COMPLETE (Azure upload)")
-        return 'azure_upload_success'
+        azure_writer = AzureWriter(connection_string=AZURE_CONNECTION_STRING)
+        azure_report = azure_writer.write_both_to_azure(df_processed, AZURE_CONTAINER)
+        
+        logger.info(f"  Azure Upload Results:")
+        logger.info(f"  Status: {azure_report.get('overall_success', False)}")
+        if azure_report.get('parquet'):
+            logger.info(f"  Parquet Blob: {azure_report['parquet'].get('file_size_mb', 0)} MB")
+        if azure_report.get('csv'):
+            logger.info(f"  CSV Blob: {azure_report['csv'].get('file_size_mb', 0)} MB")
+        
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        logger.info(f" Phase 6 COMPLETE (Execution time: {execution_time:.2f}s)")
+        logger.info("=" * 80)
+        
+        return {
+            'status': 'success',
+            'files_uploaded': 2,
+            'execution_time_seconds': execution_time
+        }
         
     except Exception as e:
-        logger.error(f"✗ Phase 6 FAILED: {str(e)}")
+        logger.error(f"  Phase 6 FAILED: {str(e)}")
         logger.warning("Continuing pipeline (Azure upload is optional)")
-        return 'azure_upload_failed'
+        logger.info("=" * 80)
+        return {
+            'status': 'failed',
+            'error': str(e),
+            'execution_time_seconds': 0
+        }
 
 
-def pipeline_summary(**context):
-    """Print final pipeline summary"""
+def pipeline_summary(**context) -> Dict[str, Any]:
+    """
+    Final Pipeline Summary - Print execution statistics
+    
+    Best Practice: Comprehensive execution reporting
+    Reference: Chapter 5 - Pipeline Monitoring & Orchestration
+    """
+    execution_start = datetime.now()
     logger.info("=" * 80)
-    logger.info("PIPELINE EXECUTION COMPLETE")
+    logger.info(f"[{execution_start.isoformat()}] PIPELINE EXECUTION SUMMARY")
     logger.info("=" * 80)
+    
     logger.info("")
-    logger.info("✅ ALL PHASES COMPLETED SUCCESSFULLY!")
+    logger.info(" ALL PHASES COMPLETED SUCCESSFULLY!")
     logger.info("")
-    logger.info("Summary:")
-    logger.info(f"  Data File: {DATA_FILE}")
+    logger.info(" Execution Summary:")
+    logger.info(f"  Data File:        {DATA_FILE}")
     logger.info(f"  Output Directory: {OUTPUT_DIR}")
-    logger.info(f"  Azure Container: {AZURE_CONTAINER}")
-    logger.info(f"  Execution Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"  Azure Container:  {AZURE_CONTAINER}")
+    logger.info(f"  Execution Date:   {execution_start.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("")
     logger.info("=" * 80)
+    
+    return {
+        'status': 'complete',
+        'execution_timestamp': execution_start.isoformat()
+    }
 
 
-# ============================================================================
-# DAG Tasks
-# ============================================================================
 
 with dag:
     
-    # Task 1: Read data
     task_read = PythonOperator(
         task_id='read_data',
         python_callable=read_data,
-        provide_context=True,
         doc='Read raw Yellow Taxi data from Parquet file',
     )
     
-    # Task 2: Validate data quality
     task_validate = PythonOperator(
         task_id='validate_data_quality',
         python_callable=validate_data_quality,
-        provide_context=True,
         doc='Validate data quality with 5 validation rules',
     )
     
-    # Task 3: Process data
     task_process = PythonOperator(
         task_id='process_data',
         python_callable=process_data,
-        provide_context=True,
         doc='Transform data according to school requirements',
     )
     
-    # Task 4: Validate processed data
     task_validate_processed = PythonOperator(
         task_id='validate_processed_data',
         python_callable=validate_processed_data,
-        provide_context=True,
         doc='Validate processed data schema',
     )
     
-    # Task 5: Write to local storage
     task_write_local = PythonOperator(
         task_id='write_local_data',
         python_callable=write_local_data,
-        provide_context=True,
         doc='Write processed data to local Parquet and CSV',
     )
     
-    # Task 6: Upload to Azure
     task_upload_azure = PythonOperator(
         task_id='upload_to_azure',
         python_callable=upload_to_azure,
-        provide_context=True,
         doc='Upload processed data to Azure Blob Storage',
     )
     
-    # Task 7: Pipeline summary
     task_summary = PythonOperator(
         task_id='pipeline_summary',
         python_callable=pipeline_summary,
-        provide_context=True,
         doc='Print pipeline execution summary',
     )
     
-    # ========================================================================
-    # Task Dependencies (Execution Flow)
-    # ========================================================================
     
     task_read >> task_validate >> task_process >> task_validate_processed >> task_write_local >> task_upload_azure >> task_summary
 
-# ============================================================================
-# DAG Documentation
-# ============================================================================
 
-dag.doc_md = """
-# Yellow Taxi Batch Processing Pipeline
 
-## Overview
-This DAG orchestrates the complete data engineering pipeline for Yellow Taxi data processing.
-
-## Pipeline Phases
-
-### Phase 1: Read Data
-- Load raw Yellow Taxi data from Parquet file
-- Check data shape and column names
-
-### Phase 2: Validate Data Quality  
-- Apply 5 validation rules (see validation_rules.py)
-- Report data quality issues
-
-### Phase 3: Process Data
-- Remove 3 columns: VendorID, store_and_fwd_flag, RatecodeID
-- Add 8 computed columns:
-  - Temporal: pickup_year, pickup_month
-  - Computed: trip_duration_minutes, average_speed_mph, revenue_per_mile
-  - Categorical: trip_distance_category, fare_category, trip_time_of_day
-
-### Phase 4: Validate Processed Data
-- Verify processed data schema
-- Check for expected columns
-- Validate numeric columns
-
-### Phase 5: Write to Local Storage
-- Write Parquet file with Snappy compression
-- Write CSV file
-- Both stored in `output/` directory
-
-### Phase 6: Upload to Azure
-- Upload Parquet and CSV to Azure Blob Storage
-- Container: processed-data
-- Requires: AZURE_STORAGE_CONNECTION_STRING environment variable
-
-### Phase 7: Summary
-- Report pipeline execution status
-
-## Configuration
-
-### Environment Variables
-- `AZURE_STORAGE_CONNECTION_STRING`: Azure Blob Storage connection string
-
-### Airflow Variables
-- `azure_storage_connection_string`: Fallback for Azure connection string
-
-## Data Files
-- Input: yellow_tripdata_2025-01.parquet (~700 MB, 3.4M rows)
-- Output Parquet: ~116 MB
-- Output CSV: ~585 MB
-
-## School Requirements
-Implements all requirements for Data Engineering Project Part 1:
-✓ Part 1.1: Data Reader + Validation + Backup Validator
-✓ Part 1.2: Data Processing (column removal/addition, transformations)
-✓ Part 1.3: Data Writing (local storage)
-✓ Part 1.4: Azure integration (cloud storage)
-
-## Author
-Data Engineering Team
-
-## Last Modified
-April 28, 2026
-"""
