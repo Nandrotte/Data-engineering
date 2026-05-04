@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any
+import pendulum
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ARGS = {
     'owner': 'data-engineering-team',
     'depends_on_past': False,
-    'start_date': datetime(2026, 4, 28),
+    'start_date': pendulum.datetime(2026, 5, 4, 9, 0, tz='Europe/Brussels'),
     'email': ['airflow@example.com'],
     'email_on_failure': False,
     'email_on_retry': False,
@@ -36,7 +37,7 @@ dag = DAG(
     'yellow_taxi_batch_processing',
     default_args=DEFAULT_ARGS,
     description='Yellow Taxi Data Engineering Pipeline - Batch Processing',
-    schedule='@monthly',  # Monthly schedule (adjust as needed)
+    schedule='0 9 4 * *',  
     catchup=False,
     tags=['data-engineering', 'batch', 'yellow-taxi', 'azure'],
 )
